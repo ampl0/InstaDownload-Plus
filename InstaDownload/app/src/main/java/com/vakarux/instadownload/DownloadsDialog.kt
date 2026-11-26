@@ -261,6 +261,7 @@ private fun DownloadRow(
     val uriHandler = LocalUriHandler.current
     val handleClipboardLabel = stringResource(R.string.handle_clipboard_label)
     val captionClipboardLabel = stringResource(R.string.caption_clipboard_label)
+    val postLinkClipboardLabel = stringResource(R.string.post_link_clipboard_label)
     var captionExpanded by remember(record.uri) { mutableStateOf(false) }
     var captionHasOverflow by remember(record.uri) { mutableStateOf(false) }
     val captionScrollState = rememberScrollState()
@@ -366,7 +367,10 @@ private fun DownloadRow(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 4.dp)
                     )
-                    meta?.url?.let { postUrl ->
+                    meta?.url?.let { rawPostUrl ->
+                        // Tracking query strings (e.g. ?igsh=...) are stripped so copied/opened
+                        // links are short, clean and do not carry the sharer's identifier.
+                        val postUrl = InstagramDownloader.cleanInstagramUrl(rawPostUrl)
                         Text(
                             postUrl,
                             style = MaterialTheme.typography.labelSmall,
@@ -375,7 +379,17 @@ private fun DownloadRow(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier
                                 .padding(top = 3.dp)
-                                .clickable { uriHandler.openUri(postUrl) }
+                                .combinedClickable(
+                                    onClick = { uriHandler.openUri(postUrl) },
+                                    onLongClick = {
+                                        copyDownloadText(
+                                            context = context,
+                                            label = postLinkClipboardLabel,
+                                            text = postUrl,
+                                            confirmation = R.string.post_link_copied
+                                        )
+                                    }
+                                )
                         )
                     } ?: Text(
                         stringResource(R.string.no_post_link),
@@ -499,6 +513,7 @@ private fun MediaPreview(record: DownloadRecord, fullscreen: Boolean, onFullscre
     val uriHandler = LocalUriHandler.current
     val handleClipboardLabel = stringResource(R.string.handle_clipboard_label)
     val captionClipboardLabel = stringResource(R.string.caption_clipboard_label)
+    val postLinkClipboardLabel = stringResource(R.string.post_link_clipboard_label)
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (record.mimeType.startsWith("video/")) VideoPreview(record, fullscreen, onFullscreenChange)
         else ImagePreview(record)
@@ -547,7 +562,8 @@ private fun MediaPreview(record: DownloadRecord, fullscreen: Boolean, onFullscre
                     .padding(top = 4.dp)
             )
         }
-        meta?.url?.let { postUrl ->
+        meta?.url?.let { rawPostUrl ->
+            val postUrl = InstagramDownloader.cleanInstagramUrl(rawPostUrl)
             Text(
                 postUrl,
                 style = MaterialTheme.typography.labelSmall,
@@ -557,7 +573,17 @@ private fun MediaPreview(record: DownloadRecord, fullscreen: Boolean, onFullscre
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 4.dp)
-                    .clickable { uriHandler.openUri(postUrl) }
+                    .combinedClickable(
+                        onClick = { uriHandler.openUri(postUrl) },
+                        onLongClick = {
+                            copyDownloadText(
+                                context = context,
+                                label = postLinkClipboardLabel,
+                                text = postUrl,
+                                confirmation = R.string.post_link_copied
+                            )
+                        }
+                    )
             )
         }
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {

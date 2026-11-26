@@ -68,6 +68,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.regex.Pattern
+import kotlin.math.roundToInt
 import kotlin.math.roundToLong
 
 // Instagram brand gradient colors
@@ -217,6 +218,10 @@ class MainActivity : ComponentActivity() {
             val link = intent.dataString ?: ""
             if (isValidInstagramUrl(link)) return link
         }
+        // Explicit hand-off from QuickDownloadActivity when easy save mode is turned off.
+        intent.getStringExtra(EXTRA_SHARED_URL)?.let { explicit ->
+            if (isValidInstagramUrl(explicit)) return explicit
+        }
         return ""
     }
 
@@ -243,6 +248,7 @@ class MainActivity : ComponentActivity() {
         var deselectedIndices by remember { mutableStateOf<Set<Int>>(emptySet()) }
         var viewerIndex by remember { mutableStateOf<Int?>(null) }
         var downloadComplete by remember { mutableStateOf(false) }
+        var saveProgress by remember { mutableStateOf(0f to 0L) }
         var showSettings by remember { mutableStateOf(false) }
         var targetWidth by remember { mutableIntStateOf(settings.targetWidth()) }
         var profileToBrowse by remember { mutableStateOf<String?>(null) }
@@ -261,6 +267,20 @@ class MainActivity : ComponentActivity() {
         val coroutineScope = rememberCoroutineScope()
         val colorScheme = MaterialTheme.colorScheme
         val uriHandler = LocalUriHandler.current
+
+        // Keep the display awake while media is being fetched or saved so long downloads are
+        // not interrupted by the screen turning off.
+        val keepScreenOn = isLoading || isSaving
+        val activity = LocalContext.current as? ComponentActivity
+        DisposableEffect(keepScreenOn, activity) {
+            activity?.window?.let { window ->
+                if (keepScreenOn) window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                else window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            onDispose {
+                activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        }
         val genericError = stringResource(R.string.error_generic)
         val emptyUrlError = stringResource(R.string.error_empty_url)
         val invalidUrlError = stringResource(R.string.error_invalid_url)
@@ -569,17 +589,25 @@ class MainActivity : ComponentActivity() {
                                         }
                                         hapticStart(context, settings.hapticsEnabled)
                                         isSaving = true
+                                        saveProgress = 0f to 0L
                                         var fellBackToDefaultFolder = false
+                                        val totalItems = itemsToSave.size
                                         val dlResult = runCatching {
                                             withContext(Dispatchers.IO) {
-                                                itemsToSave.forEach { item ->
-                                                    if (saveToDownloads(item, context, settings).fellBackToDefaultFolder) {
-                                                        fellBackToDefaultFolder = true
-                                                    }
+                                                itemsToSave.forEachIndexed { index, item ->
+                                                    saveToDownloads(item, context, settings) { read, total ->
+                                                        val itemFraction = if (total > 0) {
+                                                            (read.toFloat() / total).coerceIn(0f, 1f)
+                                                        } else 0f
+                                                        val overall = (index + itemFraction) / totalItems
+                                                        val totalBytes = if (total > 0) total else read
+                                                        saveProgress = overall to totalBytes
+                                                    }.let { if (it.fellBackToDefaultFolder) fellBackToDefaultFolder = true }
                                                 }
                                             }
                                         }
                                         isSaving = false
+                                        saveProgress = 0f to 0L
                                         if (fellBackToDefaultFolder) {
                                             onFolderAccessLost()
                                         }
@@ -620,13 +648,21 @@ class MainActivity : ComponentActivity() {
                             when {
                                 isSaving -> {
                                     CircularProgressIndicator(
+                                        progress = { saveProgress.first },
                                         color = Color.White,
                                         modifier = Modifier.size(20.dp),
                                         strokeWidth = 2.5.dp
                                     )
                                     Spacer(modifier = Modifier.width(12.dp))
                                     Text(
-                                        stringResource(R.string.saving_label),
+                                        if (saveProgress.second > 0) {
+                                            stringResource(
+                                                R.string.saving_progress_format,
+                                                saveProgress.first.roundToInt()
+                                            )
+                                        } else {
+                                            stringResource(R.string.saving_label)
+                                        },
                                         style = MaterialTheme.typography.labelLarge
                                     )
                                 }
@@ -916,6 +952,7 @@ class MainActivity : ComponentActivity() {
         var customWidth by remember { mutableIntStateOf(settings.customWidth) }
         var haptics by remember { mutableStateOf(settings.hapticsEnabled) }
         var openLibrary by remember { mutableStateOf(settings.openLibraryAfterDownload) }
+        var easySave by remember { mutableStateOf(settings.easySaveEnabled) }
         var theme by remember { mutableStateOf(settings.theme) }
 
         AlertDialog(
@@ -974,6 +1011,22 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     SettingsHeading(stringResource(R.string.appearance_heading))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.easy_save_label), style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.easy_save_description), style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(
+                            checked = easySave,
+                            onCheckedChange = {
+                                easySave = it
+                                settings.easySaveEnabled = it
+                            }
+                        )
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -1061,26 +1114,26 @@ class MainActivity : ComponentActivity() {
     ) {
         val previewUrl = item.previewUrl
         var loadFailed by remember(previewUrl) { mutableStateOf(false) }
-        val bitmap by produceState<ImageBitmap?>(initialValue = null, previewUrl) {
+        // Fetch the preview bytes once and derive both the bitmap and the reported size from
+        // them, so no additional network requests are made just to show the thumbnail.
+        val preview by produceState<Pair<ImageBitmap?, Long>>(initialValue = null to -1L, previewUrl) {
             if (previewUrl == null) {
-                value = null
+                value = null to -1L
                 return@produceState
             }
-            val bmp = withContext(Dispatchers.IO) {
+            val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val bytes = InstagramDownloader.fetchBytes(previewUrl)
-                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
+                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() to
+                        bytes.size.toLong()
                 }.getOrNull()
             }
-            if (bmp == null) loadFailed = true
-            value = bmp
+            if (result?.first == null) loadFailed = true
+            value = result ?: (null to -1L)
         }
+        val bitmap = preview.first
         val context = LocalContext.current
-        val sizeBytes by produceState(-1L, item.url) {
-            value = withContext(Dispatchers.IO) {
-                runCatching { InstagramDownloader.contentLength(item.url) }.getOrDefault(-1L)
-            }
-        }
+        val sizeBytes = preview.second
         val meta = listOfNotNull(
             item.takeIf { it.width in 1 until Int.MAX_VALUE && it.height > 0 }?.let { "${it.width}×${it.height}" },
             item.durationSec.takeIf { it > 0 }?.let { DateUtils.formatElapsedTime(it.roundToLong()) },
@@ -1238,6 +1291,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_LIBRARY = "com.vakarux.instadownload.extra.OPEN_LIBRARY"
+        const val EXTRA_SHARED_URL = "com.vakarux.instadownload.extra.SHARED_URL"
     }
 }
 

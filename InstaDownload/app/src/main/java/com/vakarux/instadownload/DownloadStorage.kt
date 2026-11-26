@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.ParcelFileDescriptor
+import android.media.MediaScannerConnection
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 
@@ -15,18 +16,19 @@ internal fun saveToDownloads(
     item: MediaResult,
     context: Context,
     settings: AppSettings,
-    treeUri: String? = settings.downloadTreeUri
+    treeUri: String? = settings.downloadTreeUri,
+    onProgress: (bytesRead: Long, totalBytes: Long) -> Unit = { _, _ -> }
 ): SaveOutcome {
     val base = item.baseName.ifBlank { "instagram_${System.currentTimeMillis()}" }
     val fileName = if (item.isVideo) "$base.mp4" else "$base.jpg"
     val mimeType = if (item.isVideo) "video/mp4" else "image/jpeg"
     val (uri, fellBack) = try {
-        saveTo(item, context, treeUri, fileName, mimeType) to false
+        saveTo(item, context, treeUri, fileName, mimeType, onProgress) to false
     } catch (e: Exception) {
         if (treeUri == null || treeUri != settings.downloadTreeUri) throw e
         settings.downloadTreeUri = null
         settings.downloadFolderName = AppSettings.DEFAULT_FOLDER_NAME
-        saveTo(item, context, null, fileName, mimeType) to true
+        saveTo(item, context, null, fileName, mimeType, onProgress) to true
     }
     DownloadHistory.add(context, DownloadRecord(
         uri.toString(), fileName, mimeType, System.currentTimeMillis(), item.meta,
@@ -35,14 +37,35 @@ internal fun saveToDownloads(
     return SaveOutcome(fellBack)
 }
 
+/**
+ * Writes [item] to [out]. Photos whose bytes were already fetched for an on-screen preview are
+ * copied straight from the in-memory preview cache instead of being downloaded a second time,
+ * so showing a preview no longer doubles bandwidth usage. Returns true when the cache was used.
+ */
+private fun writeMedia(
+    item: MediaResult,
+    out: java.io.OutputStream,
+    onProgress: (Long, Long) -> Unit
+): Boolean {
+    if (!item.isVideo) {
+        val cached = InstagramDownloader.copyCachedPreviewTo(item.url, out)
+        if (cached >= 0L) {
+            onProgress(cached, cached)
+            return true
+        }
+    }
+    InstagramDownloader.downloadToStream(item.url, out, onProgress)
+    return false
+}
+
 private fun saveTo(
     item: MediaResult,
     context: Context,
     downloadTreeUri: String?,
     fileName: String,
-    mimeType: String
+    mimeType: String,
+    onProgress: (Long, Long) -> Unit
 ): Uri {
-    val mediaUrl = item.url
     val isVideo = item.isVideo
     val base = fileName.substringBeforeLast('.')
 
@@ -55,7 +78,7 @@ private fun saveTo(
             context.contentResolver, parent, mimeType, fileName
         ) ?: throw Exception(context.getString(R.string.error_create_file_in_folder))
         context.contentResolver.openOutputStream(fileUri)?.use { out ->
-            InstagramDownloader.downloadToStream(mediaUrl, out)
+            writeMedia(item, out, onProgress)
         } ?: throw Exception(context.getString(R.string.error_write_to_folder))
         if (!isVideo) tagJpeg(item.meta) {
             context.contentResolver.openFileDescriptor(fileUri, "rw")?.use(it)
@@ -77,12 +100,15 @@ private fun saveTo(
         val uri = resolver.insert(collection, values)
             ?: throw Exception(context.getString(R.string.error_create_file_in_downloads))
         resolver.openOutputStream(uri)?.use { out ->
-            InstagramDownloader.downloadToStream(mediaUrl, out)
+            writeMedia(item, out, onProgress)
         }
         if (!isVideo) tagJpeg(item.meta) { resolver.openFileDescriptor(uri, "rw")?.use(it) }
         values.clear()
         values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+        // Also mark the row as not pending for the media scanner so the file shows up in
+        // the gallery immediately after the write finishes.
         resolver.update(uri, values, null, null)
+        runCatching { MediaScannerConnection.scanFile(context, arrayOf(fileName), arrayOf(mimeType), null) }
         return uri
     } else {
         try {
@@ -90,10 +116,11 @@ private fun saveTo(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "InstaDownload"
             ).apply { mkdirs() }
             val file = java.io.File(dir, fileName)
-            file.outputStream().use { InstagramDownloader.downloadToStream(mediaUrl, it) }
+            file.outputStream().use { writeMedia(item, it, onProgress) }
             if (!isVideo) tagJpeg(item.meta) {
                 ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_WRITE).use(it)
             }
+            runCatching { MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf(mimeType), null) }
             return Uri.fromFile(file)
         } catch (e: SecurityException) {
             throw Exception(context.getString(R.string.error_storage_permission_lost), e)

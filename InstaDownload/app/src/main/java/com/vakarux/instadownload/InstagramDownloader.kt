@@ -176,6 +176,17 @@ object InstagramDownloader {
         )
     }
 
+    /**
+     * Returns [url] with any tracking query string/fragment removed. Instagram share links
+     * often carry `?igsh=...` (and similar) parameters that identify the sharer; stripping them
+     * keeps saved history links short, clean and privacy-friendly.
+     */
+    fun cleanInstagramUrl(url: String): String {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return trimmed
+        return trimmed.substringBefore('?').substringBefore('#').trimEnd('/') + "/"
+    }
+
     fun extractProfileUsername(url: String): String? {
         val m = PROFILE_REGEX.matcher(url.trim())
         return if (m.matches()) m.group(1)?.takeUnless { it.lowercase() in RESERVED_PROFILE_PATHS } else null
@@ -432,21 +443,58 @@ object InstagramDownloader {
         .get().build()
 
     fun downloadToStream(url: String, out: java.io.OutputStream) {
-        val response = client.newCall(mediaRequest(url)).execute()
-        if (!response.isSuccessful) throw Exception("Download HTTP ${response.code}")
-        response.body?.byteStream()?.copyTo(out)
-            ?: throw Exception("Empty download body")
+        downloadToStream(url, out) { _, _ -> }
     }
 
-    fun contentLength(url: String): Long =
-        client.newCall(mediaRequest(url).newBuilder().head().build()).execute().use {
-            it.header("Content-Length")?.toLongOrNull() ?: -1L
+    /**
+     * Streams [url] into [out], reporting progress via [onProgress] as (bytesRead, totalBytes).
+     * totalBytes is -1 when the server does not advertise a Content-Length.
+     */
+    fun downloadToStream(url: String, out: java.io.OutputStream, onProgress: (Long, Long) -> Unit) {
+        val response = client.newCall(mediaRequest(url)).execute()
+        if (!response.isSuccessful) throw Exception("Download HTTP ${response.code}")
+        val body = response.body ?: throw Exception("Empty download body")
+        val total = body.contentLength()
+        body.byteStream().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var read = 0L
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                out.write(buffer, 0, count)
+                read += count
+                onProgress(read, total)
+            }
         }
+    }
+
+    // Bounded in-memory cache of small preview images so a photo shown as a preview
+    // is not fetched again when it is downloaded (and vice versa), avoiding doubled
+    // bandwidth for the common single-photo case.
+    private const val PREVIEW_CACHE_MAX_BYTES = 8L * 1024 * 1024
+    private val previewCache = object : android.util.LruCache<String, ByteArray>(PREVIEW_CACHE_MAX_BYTES.toInt()) {
+        override fun sizeOf(key: String, value: ByteArray): Int = value.size.coerceAtLeast(1)
+    }
 
     fun fetchBytes(url: String): ByteArray {
+        previewCache.get(url)?.let { return it }
         val response = client.newCall(mediaRequest(url)).execute()
         if (!response.isSuccessful) throw Exception("Preview HTTP ${response.code}")
-        return response.body?.bytes() ?: throw Exception("Empty preview body")
+        val bytes = response.body?.bytes() ?: throw Exception("Empty preview body")
+        // Only cache reasonably small payloads to keep memory bounded.
+        if (bytes.size <= PREVIEW_CACHE_MAX_BYTES / 2) previewCache.put(url, bytes)
+        return bytes
+    }
+
+    /**
+     * Copies the cached preview bytes (if any) for [url] into [out] and returns the number of
+     * bytes written, or -1 when nothing was cached. Used to avoid re-downloading the exact
+     * same resource that was already fetched for on-screen preview.
+     */
+    fun copyCachedPreviewTo(url: String, out: java.io.OutputStream): Long {
+        val bytes = previewCache.get(url) ?: return -1L
+        out.write(bytes)
+        return bytes.size.toLong()
     }
 
     private fun extractPostRef(url: String): InstagramPostRef? {

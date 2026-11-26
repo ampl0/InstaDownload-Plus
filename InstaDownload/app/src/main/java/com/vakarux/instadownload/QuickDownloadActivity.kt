@@ -12,16 +12,34 @@ class QuickDownloadActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        intent?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.let { url ->
+        val sharedUrl = intent?.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
+        val settings = AppSettings(this)
+
+        if (sharedUrl.isNullOrBlank()) {
+            finish()
+            return
+        }
+
+        if (settings.easySaveEnabled) {
+            // Easy save mode (default): start the background download immediately — no tap,
+            // progress shown in the notification.
             val serviceIntent = Intent(this, QuickDownloadService::class.java).apply {
                 action = QuickDownloadService.ACTION_DOWNLOAD
-                putExtra(QuickDownloadService.EXTRA_URL, url)
+                putExtra(QuickDownloadService.EXTRA_URL, sharedUrl)
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(serviceIntent)
             } else {
                 startService(serviceIntent)
             }
+        } else {
+            // Easy save off: hand the link to the app so the user can pick quality and confirm.
+            startActivity(
+                Intent(this, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                    putExtra(MainActivity.EXTRA_SHARED_URL, sharedUrl)
+                }
+            )
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&

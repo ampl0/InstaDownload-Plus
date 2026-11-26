@@ -38,6 +38,12 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("open_library_after_download", true)
         set(value) = prefs.edit().putBoolean("open_library_after_download", value).apply()
 
+    // Easy save mode: when a link is shared to the app, start downloading immediately in the
+    // background (foreground service + progress notification) with no extra tap. On by default.
+    var easySaveEnabled: Boolean
+        get() = prefs.getBoolean("easy_save", true)
+        set(value) = prefs.edit().putBoolean("easy_save", value).apply()
+
     var theme: AppTheme
         get() = enumValue(prefs.getString("theme", null), AppTheme.SYSTEM)
         set(value) = prefs.edit().putString("theme", value.name).apply()

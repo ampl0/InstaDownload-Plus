@@ -20,6 +20,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -57,8 +58,40 @@ class QuickDownloadService : Service() {
             ongoing = true
         ))
 
+        // Per-byte progress for the single shared link, surfaced on the ongoing notification so
+        // the download visibly advances in the shade even while the app is backgrounded.
+        val progress = MutableStateFlow(0 to 0L)
+        var lastNotified = 0L
+        val progressJob = serviceScope.launch {
+            progress.collect { (percent, _) ->
+                val now = System.currentTimeMillis()
+                if (percent >= 100 || now - lastNotified >= 400L) {
+                    lastNotified = now
+                    withContext(Dispatchers.Main) {
+                        runCatching {
+                            getSystemService(NotificationManager::class.java).notify(
+                                NOTIFICATION_ID,
+                                buildNotification(
+                                    title = getString(R.string.quick_download_in_progress_title),
+                                    text = getString(R.string.download_progress_format, percent),
+                                    ongoing = true,
+                                    progressPercent = percent.takeIf { it in 1..99 }
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         serviceScope.launch {
-            val result = runCatching { download(url) }
+            val result = runCatching {
+                download(url) { read, total ->
+                    val percent = if (total > 0) ((read * 100) / total).toInt().coerceIn(0, 100) else 0
+                    progress.value = percent to total
+                }
+            }
+            progressJob.cancel()
             withContext(Dispatchers.Main) {
                 val notification = result.fold(
                     onSuccess = { usedDefaultFolder ->
@@ -178,12 +211,21 @@ class QuickDownloadService : Service() {
             .build()
     }
 
-    private fun download(url: String): Boolean {
+    private fun download(url: String, onProgress: (Long, Long) -> Unit = { _, _ -> }): Boolean {
         val settings = AppSettings(this)
         val items = InstagramDownloader.getMediaItems(url, settings.targetWidth())
         if (items.isEmpty()) throw Exception(getString(R.string.error_download_failed))
-        return items.map { saveToDownloads(it, this, settings).fellBackToDefaultFolder }
-            .any { it }
+        val itemCount = items.size.coerceAtLeast(1)
+        return items.mapIndexed { index, item ->
+            // Blend each item's byte progress into an overall fraction across all media so a
+            // carousel still advances smoothly rather than restarting from zero per item.
+            val outcome = saveToDownloads(item, this, settings) { read, total ->
+                val itemFraction = if (total > 0) (read.toFloat() / total).coerceIn(0f, 1f) else 0f
+                val overall = (index + itemFraction) / itemCount
+                onProgress((overall * 100).toLong(), 100L)
+            }
+            outcome
+        }.any { it.fellBackToDefaultFolder }
     }
 
     private fun createNotificationChannel() {
@@ -211,7 +253,8 @@ class QuickDownloadService : Service() {
         title: String,
         text: String,
         ongoing: Boolean,
-        opensLibrary: Boolean = false
+        opensLibrary: Boolean = false,
+        progressPercent: Int? = null
     ) =
         NotificationCompat.Builder(this, if (ongoing) CHANNEL_ID else RESULT_CHANNEL_ID)
             .setSmallIcon(R.drawable.download)
@@ -223,7 +266,10 @@ class QuickDownloadService : Service() {
             .setOnlyAlertOnce(true)
             .setPriority(if (ongoing) NotificationCompat.PRIORITY_LOW else NotificationCompat.PRIORITY_HIGH)
             .apply {
-                if (ongoing) setProgress(0, 0, true)
+                if (ongoing) {
+                    if (progressPercent != null) setProgress(100, progressPercent, false)
+                    else setProgress(0, 0, true)
+                }
             }
             .build()
 
