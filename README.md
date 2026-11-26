@@ -4,7 +4,7 @@ A privacy-friendly Android app for downloading public Instagram reels, photos, v
 
 **No login, no ads, no tracking for public content. Fully open source.**
 
-> **This repository** (`ampl0/InstaDownload`) is a maintained fork of
+> **This repository** (`ampl0/InstaDownload-Plus`) is a maintained fork of
 > [Orang-Studio/InstaDownload](https://github.com/Orang-Studio/InstaDownload) that adds an
 > easy-save share flow, in-app download progress, a retry list for failed links, success/fail
 > sounds, curated history links and gallery fixes. See
@@ -13,13 +13,13 @@ A privacy-friendly Android app for downloading public Instagram reels, photos, v
 
 <p align="center">
   <a href="../../releases/latest">
-    <img src="https://img.shields.io/github/v/release/ampl0/InstaDownload?label=Latest%20release&color=2563eb" alt="Latest release">
+    <img src="https://img.shields.io/github/v/release/ampl0/InstaDownload-Plus?label=Latest%20release&color=2563eb" alt="Latest release">
   </a>
   <a href="../../releases">
-    <img src="https://img.shields.io/github/downloads/ampl0/InstaDownload/total.svg?label=Downloads" alt="Total downloads">
+    <img src="https://img.shields.io/github/downloads/ampl0/InstaDownload-Plus/total.svg?label=Downloads" alt="Total downloads">
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/github/license/ampl0/InstaDownload" alt="GPLv3 License">
+    <img src="https://img.shields.io/github/license/ampl0/InstaDownload-Plus" alt="GPLv3 License">
   </a>
   <img src="https://img.shields.io/badge/Android-7.0%2B-3ddc84?logo=android&logoColor=white" alt="Android 7.0+">
   <img src="https://img.shields.io/badge/Kotlin-2.x-7f52ff?logo=kotlin&logoColor=white" alt="Kotlin">
@@ -70,6 +70,12 @@ Grab the ready-to-install debug APK from the
 <p align="center">
   <img src="img/lighttheme.png" width="250" alt="InstaDownload light theme">
   <img src="img/darktheme.png" width="250" alt="InstaDownload dark theme">
+  <img src="img/running-build.png" width="250" alt="This fork running on device (v3.1.2-debug)">
+</p>
+
+<p align="center">
+  <sub>Left/centre: upstream themes. Right: <strong>this fork running</strong> — note the
+  <strong>Downloads</strong> library button and the <strong>Settings</strong> gear in the top bar.</sub>
 </p>
 
 ## Speed comparison
@@ -144,7 +150,7 @@ Prerequisites:
 - The Gradle wrapper is bundled, so no separate Gradle install is needed
 
 ```bash
-git clone https://github.com/ampl0/InstaDownload.git
+git clone https://github.com/ampl0/InstaDownload-Plus.git
 cd InstaDownload
 
 # Point Gradle at your SDK (or set ANDROID_HOME / sdk.dir in local.properties)
