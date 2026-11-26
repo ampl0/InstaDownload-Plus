@@ -85,6 +85,7 @@ class QuickDownloadService : Service() {
         }
 
         serviceScope.launch {
+            val settings = AppSettings(this@QuickDownloadService)
             val result = runCatching {
                 download(url) { read, total ->
                     val percent = if (total > 0) ((read * 100) / total).toInt().coerceIn(0, 100) else 0
@@ -95,6 +96,8 @@ class QuickDownloadService : Service() {
             withContext(Dispatchers.Main) {
                 val notification = result.fold(
                     onSuccess = { usedDefaultFolder ->
+                        FailedDownloads.remove(this@QuickDownloadService, url)
+                        DownloadSounds.playSuccess(this@QuickDownloadService, settings.soundsEnabled)
                         buildNotification(
                             title = getString(R.string.quick_download_complete_title),
                             text = if (usedDefaultFolder) {
@@ -107,6 +110,8 @@ class QuickDownloadService : Service() {
                         )
                     },
                     onFailure = { error ->
+                        DownloadSounds.playFailure(this@QuickDownloadService, settings.soundsEnabled)
+                        FailedDownloads.add(this@QuickDownloadService, url, error.message)
                         buildNotification(
                             title = getString(R.string.quick_download_failed_title),
                             text = error.message ?: getString(R.string.error_download_failed),
@@ -150,12 +155,15 @@ class QuickDownloadService : Service() {
             try {
                 codes.forEachIndexed { i, code ->
                     ensureActive()
+                    val postUrl = "https://www.instagram.com/p/$code/"
                     val items = runCatching {
-                        InstagramDownloader.getMediaItems("https://www.instagram.com/p/$code/", settings.targetWidth())
-                    }.getOrElse {
+                        InstagramDownloader.getMediaItems(postUrl, settings.targetWidth())
+                    }.getOrElse { error ->
                         update { it.copy(failed = it.failed + counts[i]) }
+                        FailedDownloads.add(this@QuickDownloadService, postUrl, error.message)
                         return@forEachIndexed
                     }
+                    var postFailed = false
                     items.forEach { item ->
                         ensureActive()
                         runCatching {
@@ -164,13 +172,26 @@ class QuickDownloadService : Service() {
                             onSuccess = { out ->
                                 update { it.copy(saved = it.saved + 1, fellBack = it.fellBack || out.fellBackToDefaultFolder) }
                             },
-                            onFailure = { update { it.copy(failed = it.failed + 1) } }
+                            onFailure = {
+                                postFailed = true
+                                update { it.copy(failed = it.failed + 1) }
+                                FailedDownloads.add(this@QuickDownloadService, postUrl, it.message)
+                            }
                         )
+                    }
+                    if (items.isNotEmpty() && !postFailed) {
+                        // Whole post succeeded — drop any earlier failure for the same link.
+                        FailedDownloads.remove(this@QuickDownloadService, postUrl)
                     }
                 }
             } finally {
                 val state = _batch.value!!.copy(running = false)
                 _batch.value = state
+                if (state.failed > 0) {
+                    DownloadSounds.playFailure(this@QuickDownloadService, settings.soundsEnabled)
+                } else {
+                    DownloadSounds.playSuccess(this@QuickDownloadService, settings.soundsEnabled)
+                }
                 withContext(Dispatchers.Main + NonCancellable) {
                     runCatching {
                         getSystemService(NotificationManager::class.java).notify(startId, buildNotification(
@@ -323,6 +344,16 @@ class QuickDownloadService : Service() {
 
         fun stopBatch(context: Context) {
             context.startService(Intent(context, QuickDownloadService::class.java).setAction(ACTION_STOP_BATCH))
+        }
+
+        /** Starts a background download for [url] (reusing the quick-download pipeline). */
+        fun startDownload(context: Context, url: String) {
+            val intent = Intent(context, QuickDownloadService::class.java).apply {
+                action = ACTION_DOWNLOAD
+                putExtra(EXTRA_URL, url)
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(intent)
+            else context.startService(intent)
         }
         const val EXTRA_URL = "com.vakarux.instadownload.extra.URL"
 

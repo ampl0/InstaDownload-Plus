@@ -34,6 +34,11 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("haptics", true)
         set(value) = prefs.edit().putBoolean("haptics", value).apply()
 
+    // Play a short success/failure tone when a download finishes. On by default.
+    var soundsEnabled: Boolean
+        get() = prefs.getBoolean("sounds", true)
+        set(value) = prefs.edit().putBoolean("sounds", value).apply()
+
     var openLibraryAfterDownload: Boolean
         get() = prefs.getBoolean("open_library_after_download", true)
         set(value) = prefs.edit().putBoolean("open_library_after_download", value).apply()

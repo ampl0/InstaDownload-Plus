@@ -318,7 +318,9 @@ class MainActivity : ComponentActivity() {
             }
             isLoading = false
             if (items.isFailure) {
-                fullError = items.exceptionOrNull()?.message ?: genericError
+                val message = items.exceptionOrNull()?.message ?: genericError
+                FailedDownloads.add(context, trimmed, message)
+                fullError = message
                 return@LaunchedEffect
             }
             hapticStart(context, settings.hapticsEnabled)
@@ -578,8 +580,10 @@ class MainActivity : ComponentActivity() {
                                             }
                                             isLoading = false
                                             if (fetched.isFailure) {
-                                                fullError = fetched.exceptionOrNull()?.message
+                                                val message = fetched.exceptionOrNull()?.message
                                                     ?: genericError
+                                                FailedDownloads.add(context, trimmed, message)
+                                                fullError = message
                                                 return@launch
                                             }
                                             fetched.getOrThrow().also { media = it }
@@ -613,6 +617,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                         if (dlResult.isSuccess) {
                                             hapticComplete(context, settings.hapticsEnabled)
+                                            DownloadSounds.playSuccess(context, settings.soundsEnabled)
                                             downloadComplete = true
                                             if (fellBackToDefaultFolder) {
                                                 fullError = folderAccessLostError
@@ -623,8 +628,12 @@ class MainActivity : ComponentActivity() {
                                             deselectedIndices = emptySet()
                                             onDownloadsSaved()
                                         } else {
-                                            fullError = dlResult.exceptionOrNull()?.message
+                                            hapticStart(context, settings.hapticsEnabled)
+                                            DownloadSounds.playFailure(context, settings.soundsEnabled)
+                                            val message = dlResult.exceptionOrNull()?.message
                                                 ?: downloadFailedError
+                                            FailedDownloads.add(context, trimmed, message)
+                                            fullError = message
                                         }
                                     }
                                 }
@@ -951,6 +960,8 @@ class MainActivity : ComponentActivity() {
         var quality by remember { mutableStateOf(settings.quality) }
         var customWidth by remember { mutableIntStateOf(settings.customWidth) }
         var haptics by remember { mutableStateOf(settings.hapticsEnabled) }
+        var sounds by remember { mutableStateOf(settings.soundsEnabled) }
+        val context = LocalContext.current
         var openLibrary by remember { mutableStateOf(settings.openLibraryAfterDownload) }
         var easySave by remember { mutableStateOf(settings.easySaveEnabled) }
         var theme by remember { mutableStateOf(settings.theme) }
@@ -1040,6 +1051,23 @@ class MainActivity : ComponentActivity() {
                             onCheckedChange = {
                                 haptics = it
                                 settings.hapticsEnabled = it
+                            }
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(stringResource(R.string.sound_feedback_label), style = MaterialTheme.typography.bodyLarge)
+                            Text(stringResource(R.string.sound_feedback_description), style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(
+                            checked = sounds,
+                            onCheckedChange = {
+                                sounds = it
+                                settings.soundsEnabled = it
+                                if (it) DownloadSounds.playSuccess(context, true)
                             }
                         )
                     }

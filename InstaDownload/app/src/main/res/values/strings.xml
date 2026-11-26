@@ -105,6 +105,8 @@
     <string name="easy_save_description">Download shared links automatically in the background, no tap needed</string>
     <string name="haptic_feedback_label">Haptic feedback</string>
     <string name="haptic_feedback_description">Vibrate for download events</string>
+    <string name="sound_feedback_label">Download sounds</string>
+    <string name="sound_feedback_description">Play a tone when a download succeeds or fails</string>
     <string name="open_library_label">Open downloads after saving</string>
     <string name="open_library_description">Show the downloads screen when a download finishes</string>
     <string name="open_link_failed">No app could open this link</string>
@@ -156,4 +158,19 @@
     <string name="reset_filters_label">Reset</string>
     <string name="clear_label">Clear</string>
     <string name="cancel_label">Cancel</string>
+
+    <string name="downloads_failed">Failed</string>
+    <string name="failed_downloads_empty">No failed downloads.</string>
+    <string name="failed_downloads_empty_hint">Links that fail to download are kept here so you can retry them later.</string>
+    <string name="retry_download_label">Retry</string>
+    <string name="retry_all_label">Retry all</string>
+    <string name="clear_failed_label">Clear failed</string>
+    <string name="remove_label">Remove</string>
+    <string name="failed_attempts_format">%1$d attempts</string>
+    <string name="failed_when_format">Failed %1$s</string>
+    <string name="retry_started">Retrying download…</string>
+    <string name="failed_removed">Removed from failed downloads</string>
+    <string name="failed_cleared">Failed downloads cleared</string>
+    <string name="failed_link_clipboard_label">Instagram link</string>
+    <string name="failed_link_copied">Instagram link copied</string>
 </resources>
