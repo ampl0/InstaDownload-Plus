@@ -62,27 +62,35 @@ Add a `soundsEnabled` preference (key `"sounds"`, default `true`), mirroring `ha
 
 ### `MainActivity.kt`
 
-- On save success: play the success tone, and remove the link from `FailedDownloads`.
+- On save success: play the success tone. Do **not** remove the link from `FailedDownloads`.
 - On any fetch/save failure: play the failure tone and `FailedDownloads.add(context, url, error)`.
+- Record every pasted/fetched link with `LinkHistory.add(context, url)`.
 - Add a **"Download sounds"** toggle in `SettingsDialog` (mirror the haptics toggle), using
   `LocalContext.current`, and play a preview tone when it is switched on.
 
 ### `QuickDownloadService.kt`
 
-- Single-download path: on success play success + `FailedDownloads.remove`; on failure play failure +
-  `FailedDownloads.add`.
-- Batch path: track a `postFailed` flag per post, record the failing post URL, and play one sound for
-  the overall result.
+- Single-download path: on success play success (no `FailedDownloads.remove`); on failure play failure
+  + `FailedDownloads.add`. Record the shared link with `LinkHistory.add(...)`.
+- Batch path: record the failing post URL and play one sound for the overall result.
 - Add `companion object { fun startDownload(context, url) }` that starts the service for a URL, so
   the UI can retry.
 
 ### `DownloadsDialog.kt`
 
-- Add `failed` / `showingFailed` state and a **"Failed (N)"** tab to the tab row (error-colored when
-  selected).
+- Add `failed` / `links` state and **"Failed (N)"** and **"Links"** tabs to the tab row (Failed is
+  error-colored when selected).
 - Add `ColumnScope.FailedDownloadsList(...)`: one card per failed link showing the URL, when it
-  failed, attempts and the error; actions **Retry**, **Retry all**, **Remove**, **Clear failed**;
-  long-press copies the clean link via `copyDownloadText`.
+  failed, attempts and the error; actions **Retry**, **Retry all**, **Remove**, **Clear failed**.
+  Retry must **not** call `FailedDownloads.remove`.
+- Add `ColumnScope.LinkHistoryList(...)` backed by `LinkHistory`: per-row **Download** / **Remove**
+  and a header **Clear history** guarded by an `AlertDialog` confirmation.
+- Add a shared multi-select mode (`selecting` + `selected: Set<String>`): long-press a row to start,
+  tap to toggle, with a `SelectionBar` offering **Select all / Clear selection / Copy / Share /
+  Export**.
+- Helper functions: `copyLinks` (`ClipData.newPlainText`, newline-joined), `shareLinks`
+  (`ACTION_SEND` text), `exportLinks` (writes `cacheDir/exports/links.txt` and shares it through the
+  `FileProvider`).
 - **Compose gotchas:**
   - Any composable that uses `Modifier.weight` must be a `ColumnScope`/`RowScope` extension
     (import `androidx.compose.foundation.layout.ColumnScope`).
@@ -98,13 +106,25 @@ Add a `soundsEnabled` preference (key `"sounds"`, default `true`), mirroring `ha
 
 - Ensure written files are announced via `MediaScannerConnection` so they appear in the gallery.
 
+### `LinkHistory.kt`
+
+- Add a new object mirroring `FailedDownloads` but for every pasted/shared link, keyed by cleaned
+  URL: record `{ url, firstSeen, lastSeen, count }`, `add`/`remove`/`clear`, capped at 500, never
+  auto-removed.
+
 ### `strings.xml`
 
 Add: `sound_feedback_label`, `sound_feedback_description`, `downloads_failed`,
 `failed_downloads_empty`, `failed_downloads_empty_hint`, `retry_download_label`, `retry_all_label`,
 `clear_failed_label`, `remove_label`, `failed_attempts_format`, `failed_when_format`,
 `retry_started`, `failed_removed`, `failed_cleared`, `failed_link_clipboard_label`,
-`failed_link_copied`.
+`failed_link_copied`, plus the history and multi-select strings: `history_title`,
+`history_clear_label`, `history_removed`, `history_cleared`, `history_empty`,
+`history_empty_hint`, `history_seen_format`, `history_clear_confirm_title`,
+`history_clear_confirm_text`, `copy_links_label`, `share_links_label`, `export_links_label`,
+`links_copied_format`, `links_clipboard_label`, `selected_count_format`, `select_done_label`,
+`select_all_links_label`, `clear_selection_label`, `no_links_selected`, `export_filename`,
+`export_failed`.
 
 ## 4. Verify
 

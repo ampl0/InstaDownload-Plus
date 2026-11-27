@@ -20,7 +20,11 @@ data class FailedDownload(
 /**
  * Persists download URLs that failed, so the user can review them and retry later instead of
  * losing the link. Keyed by the cleaned URL: re-failing the same link bumps its attempt count and
- * updates the error, while a later success removes it.
+ * updates the error.
+ *
+ * Entries are **never removed automatically**. A successful download (or a successful retry) does
+ * not clear a failure — the link stays in the list until the user explicitly removes it or taps
+ * Clear failed. This protects links the user still cares about from silently disappearing.
  */
 object FailedDownloads {
     private const val PREFS = "failed_downloads"

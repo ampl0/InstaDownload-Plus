@@ -48,8 +48,13 @@ Grab the ready-to-install debug APK from the
   notification, no extra taps (on by default, toggle in Settings).
 - **Background downloads with progress** — a foreground service keeps going while you leave the app.
 - **Failed download retry list** — links that fail are saved (tracking stripped) so you can retry
-  one or all of them later; successes are removed automatically.
+  one or all of them later. Links are **never removed automatically** — not even after a successful
+  retry — until you remove them or tap **Clear failed**.
 - **Download sounds** — a distinct tone on success and on failure (on by default, toggle in Settings).
+- **Persistent link history** — every link you paste or share is remembered, including ones that
+  failed, so nothing is lost. Only an explicit **Remove** or **Clear history** deletes an entry.
+- **Multi-select copy / share / export** — long-press any link in the Downloads, Failed or Links tab
+  to select several, then copy them, share them as text, or export them to a `.txt` file.
 - **Clean history links** — share/copy/open history entries use `?`-stripped links, so no sharer
   tracking parameters leak.
 - **Keep screen on** while a download is running.
@@ -105,8 +110,17 @@ Grab the ready-to-install debug APK from the
 **Retrying a failed download:**
 
 1. Open the download library and pick the **Failed (N)** tab.
-2. Tap **Retry** on one link, or **Retry all**. Long-press to copy the clean link; **Clear failed**
-   empties the list.
+2. Tap **Retry** on one link, or **Retry all**. Retrying does **not** remove the entry — the link
+   stays until you remove it or tap **Clear failed**.
+
+**Reusing your links:**
+
+1. Open the library and pick the **Links** tab (a full history of every link you pasted or shared,
+   including failed ones).
+2. Long-press a link to start selection, then tap more links to add them.
+3. Use the toolbar to **copy**, **share** them as text, or **export** them to a `.txt` file.
+4. Per link you can **Download** it again or **Remove** it; **Clear history** (with a confirmation)
+   empties the whole list.
 
 <details>
 <summary><strong>Supported Instagram links</strong></summary>
@@ -182,11 +196,12 @@ InstaDownload/                     # repo root
     │       ├── MainActivity.kt          # main UI + paste save flow
     │       ├── QuickDownloadActivity.kt # share entry point
     │       ├── QuickDownloadService.kt  # background foreground-service downloads
-    │       ├── DownloadsDialog.kt       # library + history + failed tabs
+    │       ├── DownloadsDialog.kt       # library + links + failed tabs, multi-select copy/share/export
     │       ├── InstagramDownloader.kt   # Instagram API/reverse-engineering layer
     │       ├── DownloadStorage.kt       # file writing + MediaScanner
     │       ├── DownloadHistory.kt       # saved history
-    │       ├── FailedDownloads.kt       # failed-link persistence
+    │       ├── FailedDownloads.kt       # failed-link persistence (never auto-removed)
+    │       ├── LinkHistory.kt           # persistent paste/share link history
     │       ├── DownloadSounds.kt        # success/failure tones
     │       ├── AppSettings.kt           # preferences
     │       └── ProfileBrowser.kt        # profile bulk download UI

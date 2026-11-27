@@ -311,6 +311,7 @@ class MainActivity : ComponentActivity() {
             media = null
             deselectedIndices = emptySet()
             downloadComplete = false
+            LinkHistory.add(context, trimmed)
             val items = runCatching {
                 withContext(Dispatchers.IO) {
                     InstagramDownloader.getMediaItems(trimmed, targetWidth)

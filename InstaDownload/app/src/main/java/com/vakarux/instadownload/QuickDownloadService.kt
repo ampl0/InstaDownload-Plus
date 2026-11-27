@@ -52,6 +52,7 @@ class QuickDownloadService : Service() {
         }
 
         active++
+        LinkHistory.add(this@QuickDownloadService, url)
         startForeground(NOTIFICATION_ID, buildNotification(
             title = getString(R.string.quick_download_in_progress_title),
             text = getString(R.string.quick_download_in_progress_text),
@@ -96,7 +97,8 @@ class QuickDownloadService : Service() {
             withContext(Dispatchers.Main) {
                 val notification = result.fold(
                     onSuccess = { usedDefaultFolder ->
-                        FailedDownloads.remove(this@QuickDownloadService, url)
+                        // A success does NOT clear a failed entry — links stay until the user
+                        // removes them or taps Clear failed (see FailedDownloads docs).
                         DownloadSounds.playSuccess(this@QuickDownloadService, settings.soundsEnabled)
                         buildNotification(
                             title = getString(R.string.quick_download_complete_title),
@@ -163,7 +165,6 @@ class QuickDownloadService : Service() {
                         FailedDownloads.add(this@QuickDownloadService, postUrl, error.message)
                         return@forEachIndexed
                     }
-                    var postFailed = false
                     items.forEach { item ->
                         ensureActive()
                         runCatching {
@@ -173,15 +174,10 @@ class QuickDownloadService : Service() {
                                 update { it.copy(saved = it.saved + 1, fellBack = it.fellBack || out.fellBackToDefaultFolder) }
                             },
                             onFailure = {
-                                postFailed = true
                                 update { it.copy(failed = it.failed + 1) }
                                 FailedDownloads.add(this@QuickDownloadService, postUrl, it.message)
                             }
                         )
-                    }
-                    if (items.isNotEmpty() && !postFailed) {
-                        // Whole post succeeded — drop any earlier failure for the same link.
-                        FailedDownloads.remove(this@QuickDownloadService, postUrl)
                     }
                 }
             } finally {

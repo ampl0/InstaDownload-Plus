@@ -173,4 +173,35 @@
     <string name="failed_cleared">Failed downloads cleared</string>
     <string name="failed_link_clipboard_label">Instagram link</string>
     <string name="failed_link_copied">Instagram link copied</string>
+
+    <!-- Link history -->
+    <string name="history_title">Links</string>
+    <string name="history_empty">No links yet.</string>
+    <string name="history_empty_hint">Links you paste or share into the app are kept here until you clear them.</string>
+    <string name="history_clear_label">Clear history</string>
+    <string name="history_cleared">Link history cleared</string>
+    <string name="history_remove_label">Remove</string>
+    <string name="history_removed">Link removed from history</string>
+    <string name="history_clear_confirm_title">Clear link history?</string>
+    <string name="history_clear_confirm_text">This removes every saved link. This cannot be undone.</string>
+    <string name="history_seen_format">First seen %1$s · %2$d time(s)</string>
+    <string name="history_already_title">Already saved — download again?</string>
+    <string name="history_already_text">This link is already in your history. Download it again?</string>
+    <string name="history_download_again">Download again</string>
+
+    <!-- Multi-select / export -->
+    <string name="select_label">Select</string>
+    <string name="select_done_label">Done</string>
+    <string name="selected_count_format">%1$d selected</string>
+    <string name="copy_links_label">Copy links</string>
+    <string name="share_links_label">Share links</string>
+    <string name="export_links_label">Save .txt</string>
+    <string name="links_copied_format">Copied %1$d link(s)</string>
+    <string name="links_clipboard_label">Instagram links</string>
+    <string name="export_filename">instagram_links.txt</string>
+    <string name="export_ready">Links file ready</string>
+    <string name="export_failed">Could not export links</string>
+    <string name="no_links_selected">Select at least one link</string>
+    <string name="select_all_links_label">Select all</string>
+    <string name="clear_selection_label">None</string>
 </resources>

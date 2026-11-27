@@ -42,6 +42,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -113,20 +114,50 @@ private val DownloadRecord.kind: DownloadKind
         else -> DownloadKind.POSTS
     }
 
+/**
+ * The cleaned Instagram link for a downloaded record, or null when the record has no post URL.
+ * Used by the multi-select copy/share/export actions.
+ */
+private val DownloadRecord.link: String?
+    get() = meta?.url?.takeIf { it.isNotBlank() }?.let { InstagramDownloader.cleanInstagramUrl(it) }
+
+private enum class LibraryTab(val labelRes: Int) {
+    ALL(R.string.downloads_all),
+    REELS(R.string.downloads_reels),
+    POSTS(R.string.downloads_posts),
+    STORIES(R.string.downloads_stories),
+    FAILED(R.string.downloads_failed),
+    HISTORY(R.string.history_title),
+}
+
 @Composable
 fun DownloadsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     var records by remember { mutableStateOf(DownloadHistory.load(context)) }
     var failed by remember { mutableStateOf(FailedDownloads.load(context)) }
-    var showingFailed by remember { mutableStateOf(false) }
+    var links by remember { mutableStateOf(LinkHistory.load(context)) }
+    var tab by remember { mutableStateOf(LibraryTab.ALL) }
     var previewRecord by remember { mutableStateOf<DownloadRecord?>(null) }
-    var selectedKind by remember { mutableStateOf(DownloadKind.ALL) }
     var fullscreen by remember { mutableStateOf(false) }
+    var selecting by remember { mutableStateOf(false) }
+    var selected by remember { mutableStateOf(setOf<String>()) }
+
+    fun reload() {
+        records = DownloadHistory.load(context)
+        failed = FailedDownloads.load(context)
+        links = LinkHistory.load(context)
+    }
+
+    fun exitSelection() {
+        selecting = false
+        selected = emptySet()
+    }
 
     Dialog(
         onDismissRequest = {
             if (fullscreen) fullscreen = false
             else if (previewRecord != null) previewRecord = null
+            else if (selecting) exitSelection()
             else onDismiss()
         },
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
@@ -146,30 +177,33 @@ fun DownloadsDialog(onDismiss: () -> Unit) {
             color = if (fullscreen) Color.Black else MaterialTheme.colorScheme.background
         ) {
             Column {
-                if (!fullscreen) Row(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        stringResource(if (previewRecord == null) R.string.downloads_title else R.string.preview_label),
-                        style = MaterialTheme.typography.headlineSmall,
-                        modifier = Modifier.weight(1f).padding(start = 20.dp, top = 16.dp, bottom = 12.dp)
-                    )
-                    if (previewRecord == null) {
-                        IconButton(
-                            onClick = {
-                                records = DownloadHistory.load(context)
-                                failed = FailedDownloads.load(context)
-                            },
-                            modifier = Modifier.padding(top = 8.dp)
-                        ) {
-                            Icon(
-                                imageVector = AppIcons.Refresh,
-                                contentDescription = stringResource(R.string.refresh_downloads_label)
+                if (!fullscreen) {
+                    if (selecting) {
+                        SelectionHeader(
+                            count = selected.size,
+                            onDone = { exitSelection() }
+                        )
+                    } else {
+                        Row(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                stringResource(if (previewRecord == null) R.string.downloads_title else R.string.preview_label),
+                                style = MaterialTheme.typography.headlineSmall,
+                                modifier = Modifier.weight(1f).padding(start = 20.dp, top = 16.dp, bottom = 12.dp)
                             )
+                            if (previewRecord == null) {
+                                IconButton(onClick = { reload() }, modifier = Modifier.padding(top = 8.dp)) {
+                                    Icon(
+                                        imageVector = AppIcons.Refresh,
+                                        contentDescription = stringResource(R.string.refresh_downloads_label)
+                                    )
+                                }
+                            }
+                            TextButton(onClick = {
+                                if (previewRecord == null) onDismiss() else previewRecord = null
+                            }, modifier = Modifier.padding(top = 8.dp, end = 12.dp)) {
+                                Text(stringResource(if (previewRecord == null) R.string.close_label else R.string.back_label))
+                            }
                         }
-                    }
-                    TextButton(onClick = {
-                        if (previewRecord == null) onDismiss() else previewRecord = null
-                    }, modifier = Modifier.padding(top = 8.dp, end = 12.dp)) {
-                        Text(stringResource(if (previewRecord == null) R.string.close_label else R.string.back_label))
                     }
                 }
                 val record = previewRecord
@@ -182,117 +216,104 @@ fun DownloadsDialog(onDismiss: () -> Unit) {
                     ) { MediaPreview(record, fullscreen) { fullscreen = it } }
                 } else {
                     ScrollableTabRow(
-                        selectedTabIndex = if (showingFailed) DownloadKind.entries.size else selectedKind.ordinal,
+                        selectedTabIndex = tab.ordinal,
                         edgePadding = 12.dp
                     ) {
-                        DownloadKind.entries.forEach { kind ->
+                        LibraryTab.entries.forEach { entry ->
+                            val count = when (entry) {
+                                LibraryTab.FAILED -> failed.size
+                                LibraryTab.HISTORY -> links.size
+                                else -> null
+                            }
                             Tab(
-                                selected = !showingFailed && selectedKind == kind,
+                                selected = tab == entry,
                                 onClick = {
-                                    showingFailed = false
-                                    selectedKind = kind
+                                    if (tab != entry) exitSelection()
+                                    tab = entry
                                 },
-                                text = { Text(stringResource(kind.labelRes)) }
-                            )
-                        }
-                        if (failed.isNotEmpty()) {
-                            Tab(
-                                selected = showingFailed,
-                                onClick = { showingFailed = true },
                                 text = {
+                                    val label = if (count != null && count > 0) {
+                                        "${stringResource(entry.labelRes)} ($count)"
+                                    } else {
+                                        stringResource(entry.labelRes)
+                                    }
                                     Text(
-                                        "${stringResource(R.string.downloads_failed)} (${failed.size})",
-                                        color = if (showingFailed) MaterialTheme.colorScheme.error
-                                        else MaterialTheme.colorScheme.onSurfaceVariant
+                                        label,
+                                        color = if (entry == LibraryTab.FAILED) MaterialTheme.colorScheme.error
+                                        else Color.Unspecified
                                     )
                                 }
                             )
                         }
                     }
-                    if (showingFailed) {
-                        FailedDownloadsList(
+                    when (tab) {
+                        LibraryTab.FAILED -> FailedDownloadsList(
                             failed = failed,
+                            selecting = selecting,
+                            selected = selected,
+                            onToggleSelect = { selected = selected.toggle(it.url) },
+                            onStartSelection = { url -> selecting = true; selected = setOf(url) },
                             onRetry = { item ->
+                                // Retrying does not clear the failed entry — links stay in the
+                                // list until the user removes them or taps Clear failed.
                                 QuickDownloadService.startDownload(context, item.url)
-                                FailedDownloads.remove(context, item.url)
-                                failed = FailedDownloads.load(context)
                                 Toast.makeText(context, R.string.retry_started, Toast.LENGTH_SHORT).show()
                             },
                             onRetryAll = {
-                                val pending = failed
-                                pending.forEach { QuickDownloadService.startDownload(context, it.url) }
-                                FailedDownloads.clear(context)
-                                failed = FailedDownloads.load(context)
+                                failed.forEach { QuickDownloadService.startDownload(context, it.url) }
                                 Toast.makeText(context, R.string.retry_started, Toast.LENGTH_SHORT).show()
                             },
                             onRemove = { item ->
                                 FailedDownloads.remove(context, item.url)
-                                failed = FailedDownloads.load(context)
+                                reload()
                                 Toast.makeText(context, R.string.failed_removed, Toast.LENGTH_SHORT).show()
                             },
                             onClear = {
                                 FailedDownloads.clear(context)
-                                failed = FailedDownloads.load(context)
-                                showingFailed = false
+                                reload()
                                 Toast.makeText(context, R.string.failed_cleared, Toast.LENGTH_SHORT).show()
                             }
                         )
-                    } else {
-                        val visibleRecords = records.filter {
-                            selectedKind == DownloadKind.ALL || it.kind == selectedKind
-                        }
-                        if (visibleRecords.isEmpty()) {
-                            Box(
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Column(
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    modifier = Modifier.padding(32.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = AppIcons.VideoLibrary,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.size(56.dp)
-                                    )
-                                    Text(
-                                        if (records.isEmpty()) stringResource(R.string.downloads_empty)
-                                        else stringResource(
-                                            R.string.downloads_empty_kind,
-                                            stringResource(selectedKind.labelRes)
-                                        ),
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        style = MaterialTheme.typography.bodyLarge,
-                                        modifier = Modifier.padding(top = 16.dp)
-                                    )
-                                    if (records.isEmpty()) {
-                                        Text(
-                                            stringResource(R.string.downloads_empty_hint),
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            modifier = Modifier.padding(top = 6.dp)
-                                        )
-                                    }
-                                }
+
+                        LibraryTab.HISTORY -> LinkHistoryList(
+                            links = links,
+                            selecting = selecting,
+                            selected = selected,
+                            onToggleSelect = { selected = selected.toggle(it) },
+                            onStartSelection = { url -> selecting = true; selected = setOf(url) },
+                            onRemove = { url ->
+                                LinkHistory.remove(context, url)
+                                selected = selected - url
+                                reload()
+                                Toast.makeText(context, R.string.history_removed, Toast.LENGTH_SHORT).show()
+                            },
+                            onClear = {
+                                LinkHistory.clear(context)
+                                exitSelection()
+                                reload()
+                                Toast.makeText(context, R.string.history_cleared, Toast.LENGTH_SHORT).show()
+                            },
+                            onDownload = { url -> QuickDownloadService.startDownload(context, url) }
+                        )
+
+                        else -> {
+                            val visibleRecords = records.filter {
+                                tab == LibraryTab.ALL || it.kind.name == tab.name
                             }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier.fillMaxWidth().weight(1f),
-                                contentPadding = PaddingValues(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                items(visibleRecords, key = { it.uri }) { record ->
-                                    DownloadRow(
-                                        record = record,
-                                        onPreview = { previewRecord = record },
-                                        onDeleted = {
-                                            DownloadHistory.remove(context, record)
-                                            records = records.filterNot { it.uri == record.uri }
-                                        }
-                                    )
+                            DownloadsLibrary(
+                                records = records,
+                                visible = visibleRecords,
+                                kind = tab,
+                                selecting = selecting,
+                                selected = selected,
+                                onStartSelection = { link -> selecting = true; selected = setOf(link) },
+                                onToggleSelect = { selected = selected.toggle(it) },
+                                onPreview = { previewRecord = it },
+                                onDeleted = { rec ->
+                                    DownloadHistory.remove(context, rec)
+                                    records = records.filterNot { it.uri == rec.uri }
                                 }
-                            }
+                            )
                         }
                     }
                 }
@@ -301,13 +322,102 @@ fun DownloadsDialog(onDismiss: () -> Unit) {
     }
 }
 
+private fun Set<String>.toggle(value: String): Set<String> =
+    if (value in this) this - value else this + value
+
 /**
- * Lists links whose download failed, so the user can retry them later. Each row can be retried or
- * removed, and the header offers "retry all" / "clear".
+ * The header shown while in multi-select mode: how many items are checked plus the batch actions
+ * (select all / none, copy, share and save-as-txt) and a Done button to leave selection mode.
+ */
+@Composable
+private fun SelectionHeader(count: Int, onDone: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            stringResource(R.string.selected_count_format, count),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f)
+        )
+        TextButton(onClick = onDone) { Text(stringResource(R.string.select_done_label)) }
+    }
+}
+
+/**
+ * A floating action bar with the batch link actions. Shown for the Downloads, Failed and Links
+ * tabs whenever selection mode is on.
+ *
+ * @param selected the currently checked URLs (cleaned links) in display order
+ * @param allLinks every link currently visible on the tab, used by select-all/none
+ * @param onSelectAll replaces the selection with [allLinks]
+ * @param onSelectNone clears the selection
+ * @param onExport persists the selection to a .txt file and opens the share sheet
+ */
+@Composable
+private fun SelectionBar(
+    selected: List<String>,
+    allLinks: List<String>,
+    onSelectAll: () -> Unit,
+    onSelectNone: () -> Unit,
+    onExport: (List<String>) -> Unit
+) {
+    val context = LocalContext.current
+    if (selected.isEmpty()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                stringResource(R.string.no_links_selected),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onSelectAll) { Text(stringResource(R.string.select_all_links_label)) }
+        }
+        return
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TextButton(onClick = onSelectNone) { Text(stringResource(R.string.clear_selection_label)) }
+        TextButton(onClick = onSelectAll) { Text(stringResource(R.string.select_all_links_label)) }
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = { copyLinks(context, selected) }) {
+            Icon(
+                imageVector = AppIcons.ContentCopy,
+                contentDescription = stringResource(R.string.copy_links_label)
+            )
+        }
+        IconButton(onClick = { shareLinks(context, selected) }) {
+            Icon(
+                imageVector = AppIcons.Share,
+                contentDescription = stringResource(R.string.share_links_label)
+            )
+        }
+        IconButton(onClick = { onExport(selected) }) {
+            Icon(
+                imageVector = AppIcons.Save,
+                contentDescription = stringResource(R.string.export_links_label)
+            )
+        }
+    }
+}
+
+/**
+ * Lists links whose download failed, so the user can retry them later. Each row can be retried,
+ * removed, or selected (long-press) for batch copy/share/export. Entries are kept until the user
+ * removes them or taps Clear failed.
  */
 @Composable
 private fun ColumnScope.FailedDownloadsList(
     failed: List<FailedDownload>,
+    selecting: Boolean,
+    selected: Set<String>,
+    onToggleSelect: (FailedDownload) -> Unit,
+    onStartSelection: (String) -> Unit,
     onRetry: (FailedDownload) -> Unit,
     onRetryAll: () -> Unit,
     onRemove: (FailedDownload) -> Unit,
@@ -316,21 +426,23 @@ private fun ColumnScope.FailedDownloadsList(
     val context = LocalContext.current
     val linkClipboardLabel = stringResource(R.string.failed_link_clipboard_label)
     Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                stringResource(R.string.failed_downloads_empty_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(onClick = onRetryAll, enabled = failed.isNotEmpty()) {
-                Text(stringResource(R.string.retry_all_label))
-            }
-            TextButton(onClick = onClear, enabled = failed.isNotEmpty()) {
-                Text(stringResource(R.string.clear_failed_label))
+        if (!selecting) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.failed_downloads_empty_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = onRetryAll, enabled = failed.isNotEmpty()) {
+                    Text(stringResource(R.string.retry_all_label))
+                }
+                TextButton(onClick = onClear, enabled = failed.isNotEmpty()) {
+                    Text(stringResource(R.string.clear_failed_label))
+                }
             }
         }
         if (failed.isEmpty()) {
@@ -351,55 +463,56 @@ private fun ColumnScope.FailedDownloadsList(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(failed, key = { it.url }) { item ->
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceVariant
-                        )
+                    SelectableCard(
+                        selected = item.url in selected,
+                        selecting = selecting,
+                        onClick = { if (selecting) onToggleSelect(item) },
+                        onLongClick = { if (selecting) onToggleSelect(item) else onStartSelection(item.url) }
                     ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
+                        Text(
+                            item.url,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = if (selecting) Modifier else Modifier.combinedClickable(
+                                onClick = {},
+                                onLongClick = {
+                                    copyDownloadText(
+                                        context = context,
+                                        label = linkClipboardLabel,
+                                        text = item.url,
+                                        confirmation = R.string.failed_link_copied
+                                    )
+                                }
+                            )
+                        )
+                        Text(
+                            stringResource(
+                                R.string.failed_when_format,
+                                DateUtils.getRelativeTimeSpanString(
+                                    item.failedAt,
+                                    System.currentTimeMillis(),
+                                    DateUtils.MINUTE_IN_MILLIS
+                                ).toString()
+                            ) + " · " + stringResource(
+                                R.string.failed_attempts_format,
+                                item.attempts
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        if (item.error.isNotBlank()) {
                             Text(
-                                item.url,
-                                style = MaterialTheme.typography.bodyMedium,
+                                item.error,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.combinedClickable(
-                                    onClick = {},
-                                    onLongClick = {
-                                        copyDownloadText(
-                                            context = context,
-                                            label = linkClipboardLabel,
-                                            text = item.url,
-                                            confirmation = R.string.failed_link_copied
-                                        )
-                                    }
-                                )
-                            )
-                            Text(
-                                stringResource(
-                                    R.string.failed_when_format,
-                                    DateUtils.getRelativeTimeSpanString(
-                                        item.failedAt,
-                                        System.currentTimeMillis(),
-                                        DateUtils.MINUTE_IN_MILLIS
-                                    ).toString()
-                                ) + " · " + stringResource(
-                                    R.string.failed_attempts_format,
-                                    item.attempts
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 2.dp)
                             )
-                            if (item.error.isNotBlank()) {
-                                Text(
-                                    item.error,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.padding(top = 2.dp)
-                                )
-                            }
+                        }
+                        if (!selecting) {
                             Row(
                                 modifier = Modifier.padding(top = 6.dp),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -415,6 +528,265 @@ private fun ColumnScope.FailedDownloadsList(
                     }
                 }
             }
+            if (selecting) {
+                SelectionBar(
+                    selected = failed.map { it.url }.filter { it in selected },
+                    allLinks = failed.map { it.url },
+                    onSelectAll = { failed.forEach { if (it.url !in selected) onToggleSelect(it) } },
+                    onSelectNone = { failed.forEach { if (it.url in selected) onToggleSelect(it) } },
+                    onExport = { exportLinks(context, it) }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The persistent link history: every Instagram link pasted or shared into the app, including
+ * links that later failed. Entries are only removed by an explicit action here.
+ */
+@Composable
+private fun ColumnScope.LinkHistoryList(
+    links: List<LinkRecord>,
+    selecting: Boolean,
+    selected: Set<String>,
+    onToggleSelect: (String) -> Unit,
+    onStartSelection: (String) -> Unit,
+    onRemove: (String) -> Unit,
+    onClear: () -> Unit,
+    onDownload: (String) -> Unit
+) {
+    val context = LocalContext.current
+    var confirmClear by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.fillMaxWidth().weight(1f)) {
+        if (!selecting) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    stringResource(R.string.history_empty_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { confirmClear = true }, enabled = links.isNotEmpty()) {
+                    Text(stringResource(R.string.history_clear_label))
+                }
+            }
+        }
+        if (links.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
+                    Icon(
+                        imageVector = AppIcons.History,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Text(
+                        stringResource(R.string.history_empty),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.padding(top = 16.dp)
+                    )
+                }
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                items(links, key = { it.url }) { item ->
+                    SelectableCard(
+                        selected = item.url in selected,
+                        selecting = selecting,
+                        onClick = { if (selecting) onToggleSelect(item.url) },
+                        onLongClick = {
+                            if (selecting) onToggleSelect(item.url) else onStartSelection(item.url)
+                        }
+                    ) {
+                        Text(
+                            item.url,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            stringResource(
+                                R.string.history_seen_format,
+                                DateUtils.getRelativeTimeSpanString(
+                                    item.lastSeen,
+                                    System.currentTimeMillis(),
+                                    DateUtils.MINUTE_IN_MILLIS
+                                ).toString(),
+                                item.count
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
+                        if (!selecting) {
+                            Row(
+                                modifier = Modifier.padding(top = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(onClick = { onDownload(item.url) }) {
+                                    Text(stringResource(R.string.download_label))
+                                }
+                                TextButton(onClick = { onRemove(item.url) }) {
+                                    Text(stringResource(R.string.remove_label))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (selecting) {
+                SelectionBar(
+                    selected = links.map { it.url }.filter { it in selected },
+                    allLinks = links.map { it.url },
+                    onSelectAll = { links.forEach { onToggleSelect(it.url) } },
+                    onSelectNone = { links.forEach { onToggleSelect(it.url) } },
+                    onExport = { exportLinks(context, it) }
+                )
+            }
+        }
+    }
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text(stringResource(R.string.history_clear_confirm_title)) },
+            text = { Text(stringResource(R.string.history_clear_confirm_text)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmClear = false
+                    onClear()
+                }) { Text(stringResource(R.string.clear_label)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmClear = false }) {
+                    Text(stringResource(R.string.cancel_label))
+                }
+            }
+        )
+    }
+}
+
+/** The saved-file library for the All / Reels / Posts / Stories tabs. */
+@Composable
+private fun ColumnScope.DownloadsLibrary(
+    records: List<DownloadRecord>,
+    visible: List<DownloadRecord>,
+    kind: LibraryTab,
+    selecting: Boolean,
+    selected: Set<String>,
+    onStartSelection: (String) -> Unit,
+    onToggleSelect: (String) -> Unit,
+    onPreview: (DownloadRecord) -> Unit,
+    onDeleted: (DownloadRecord) -> Unit
+) {
+    val context = LocalContext.current
+    if (visible.isEmpty()) {
+        Box(
+            modifier = Modifier.fillMaxWidth().weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.padding(32.dp)
+            ) {
+                Icon(
+                    imageVector = AppIcons.VideoLibrary,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(56.dp)
+                )
+                Text(
+                    if (records.isEmpty()) stringResource(R.string.downloads_empty)
+                    else stringResource(R.string.downloads_empty_kind, stringResource(kind.labelRes)),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.padding(top = 16.dp)
+                )
+                if (records.isEmpty()) {
+                    Text(
+                        stringResource(R.string.downloads_empty_hint),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            }
+        }
+        return
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxWidth().weight(1f),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items(visible, key = { it.uri }) { record ->
+            val link = record.link
+            DownloadRow(
+                record = record,
+                selecting = selecting,
+                checked = link != null && link in selected,
+                onPreview = onPreview,
+                onLongPress = { link?.let { onStartSelection(it) } },
+                onToggleCheck = { link?.let { onToggleSelect(it) } },
+                onDeleted = { onDeleted(record) }
+            )
+        }
+    }
+    if (selecting) {
+        val links = visible.mapNotNull { it.link }.distinct()
+        SelectionBar(
+            selected = links.filter { it in selected },
+            allLinks = links,
+            onSelectAll = { links.forEach { onToggleSelect(it) } },
+            onSelectNone = { links.forEach { onToggleSelect(it) } },
+            onExport = { exportLinks(context, it) }
+        )
+    }
+}
+
+/**
+ * Wraps a card in the common selection look: a leading check indicator while [selecting], plus
+ * tap-to-toggle and long-press-to-start-selection handling. [onLongClick] keeps the row's own
+ * long-press action (e.g. copy) when not in selection mode.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SelectableCard(
+    selected: Boolean,
+    selecting: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.combinedClickable(onClick = onClick, onLongClick = onLongClick)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (selecting) {
+                Icon(
+                    imageVector = if (selected) AppIcons.CheckCircle else AppIcons.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 12.dp).size(22.dp)
+                )
+            }
+            Column(modifier = Modifier.padding(12.dp).weight(1f), content = content)
         }
     }
 }
@@ -423,7 +795,11 @@ private fun ColumnScope.FailedDownloadsList(
 @Composable
 private fun DownloadRow(
     record: DownloadRecord,
-    onPreview: () -> Unit,
+    selecting: Boolean,
+    checked: Boolean,
+    onPreview: (DownloadRecord) -> Unit,
+    onLongPress: () -> Unit,
+    onToggleCheck: () -> Unit,
     onDeleted: () -> Unit
 ) {
     val context = LocalContext.current
@@ -444,13 +820,32 @@ private fun DownloadRow(
     val username = meta?.username?.takeIf { it.isNotBlank() }
     val caption = meta?.caption?.takeIf { it.isNotBlank() }
 
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = if (checked) MaterialTheme.colorScheme.secondaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant
+        ),
+        modifier = Modifier.combinedClickable(
+            onClick = { if (selecting) onToggleCheck() },
+            onLongClick = { if (selecting) onToggleCheck() else onLongPress() }
+        )
+    ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.Top) {
+                if (selecting) {
+                    Icon(
+                        imageVector = if (checked) AppIcons.CheckCircle else AppIcons.RadioButtonUnchecked,
+                        contentDescription = null,
+                        tint = if (checked) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp).size(22.dp)
+                    )
+                    Spacer(Modifier.size(8.dp))
+                }
                 DownloadThumbnail(
                     record = record,
                     exists = exists,
-                    onClick = onPreview
+                    onClick = { if (selecting) onToggleCheck() else onPreview(record) }
                 )
                 Spacer(Modifier.size(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
@@ -460,14 +855,13 @@ private fun DownloadRow(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.then(
-                            if (username == null) Modifier else Modifier.combinedClickable(
+                            if (username == null || selecting) Modifier else Modifier.combinedClickable(
                                 onClick = {},
                                 onLongClick = {
-                                    val handle = "@$username"
                                     copyDownloadText(
                                         context = context,
                                         label = handleClipboardLabel,
-                                        text = handle,
+                                        text = "@$username",
                                         confirmation = R.string.handle_copied
                                     )
                                 }
@@ -490,7 +884,7 @@ private fun DownloadRow(
                                 }
                             )
                             .then(
-                                if (caption == null) Modifier else Modifier.combinedClickable(
+                                if (caption == null || selecting) Modifier else Modifier.combinedClickable(
                                     onClick = { captionExpanded = !captionExpanded },
                                     onLongClick = {
                                         copyDownloadText(
@@ -503,7 +897,7 @@ private fun DownloadRow(
                                 )
                             )
                     )
-                    if (caption != null && (captionHasOverflow || captionExpanded)) {
+                    if (!selecting && caption != null && (captionHasOverflow || captionExpanded)) {
                         TextButton(
                             onClick = { captionExpanded = !captionExpanded },
                             contentPadding = PaddingValues(0.dp),
@@ -549,14 +943,16 @@ private fun DownloadRow(
                             modifier = Modifier
                                 .padding(top = 3.dp)
                                 .combinedClickable(
-                                    onClick = { uriHandler.openUri(postUrl) },
+                                    onClick = { if (!selecting) uriHandler.openUri(postUrl) },
                                     onLongClick = {
-                                        copyDownloadText(
-                                            context = context,
-                                            label = postLinkClipboardLabel,
-                                            text = postUrl,
-                                            confirmation = R.string.post_link_copied
-                                        )
+                                        if (!selecting) {
+                                            copyDownloadText(
+                                                context = context,
+                                                label = postLinkClipboardLabel,
+                                                text = postUrl,
+                                                confirmation = R.string.post_link_copied
+                                            )
+                                        }
                                     }
                                 )
                         )
@@ -576,33 +972,35 @@ private fun DownloadRow(
                     modifier = Modifier.padding(top = 6.dp)
                 )
             }
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
-                TextButton(
-                    onClick = onPreview,
-                    enabled = exists != false,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp)
-                ) { Text(stringResource(R.string.preview_label), maxLines = 1) }
-                TextButton(
-                    onClick = { startFileAction(context) { DownloadedFiles.openIntent(context, record) } },
-                    enabled = exists != false,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp)
-                ) { Text(stringResource(R.string.open_label), maxLines = 1) }
-                TextButton(
-                    onClick = { startFileAction(context) { DownloadedFiles.shareIntent(context, record) } },
-                    enabled = exists != false,
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp)
-                ) { Text(stringResource(R.string.share_label), maxLines = 1) }
-                TextButton(
-                    onClick = {
-                        if (DownloadedFiles.delete(context, record)) onDeleted()
-                        else Toast.makeText(context, R.string.delete_failed, Toast.LENGTH_SHORT).show()
-                    },
-                    modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(horizontal = 4.dp)
-                ) { Text(stringResource(R.string.delete_label), maxLines = 1) }
+            if (!selecting) {
+                Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                    TextButton(
+                        onClick = { onPreview(record) },
+                        enabled = exists != false,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { Text(stringResource(R.string.preview_label), maxLines = 1) }
+                    TextButton(
+                        onClick = { startFileAction(context) { DownloadedFiles.openIntent(context, record) } },
+                        enabled = exists != false,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { Text(stringResource(R.string.open_label), maxLines = 1) }
+                    TextButton(
+                        onClick = { startFileAction(context) { DownloadedFiles.shareIntent(context, record) } },
+                        enabled = exists != false,
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { Text(stringResource(R.string.share_label), maxLines = 1) }
+                    TextButton(
+                        onClick = {
+                            if (DownloadedFiles.delete(context, record)) onDeleted()
+                            else Toast.makeText(context, R.string.delete_failed, Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.weight(1f),
+                        contentPadding = PaddingValues(horizontal = 4.dp)
+                    ) { Text(stringResource(R.string.delete_label), maxLines = 1) }
+                }
             }
         }
     }
@@ -932,6 +1330,81 @@ private fun ColumnScope.VideoPreview(
     }
 }
 
+/** Puts all [urls] on the clipboard as newline-separated plain text. */
+private fun copyLinks(context: Context, urls: List<String>) {
+    if (urls.isEmpty()) {
+        Toast.makeText(context, R.string.no_links_selected, Toast.LENGTH_SHORT).show()
+        return
+    }
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("Instagram links", urls.joinToString("\n")))
+    if (AppSettings(context).hapticsEnabled) hapticTick(context)
+    Toast.makeText(context, context.getString(R.string.links_copied_format, urls.size), Toast.LENGTH_SHORT).show()
+}
+
+/** Opens the share sheet with all [urls] as newline-separated text. */
+private fun shareLinks(context: Context, urls: List<String>) {
+    if (urls.isEmpty()) {
+        Toast.makeText(context, R.string.no_links_selected, Toast.LENGTH_SHORT).show()
+        return
+    }
+    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(android.content.Intent.EXTRA_TEXT, urls.joinToString("\n"))
+        putExtra(android.content.Intent.EXTRA_TITLE, context.getString(R.string.links_clipboard_label))
+    }
+    startFileAction(context) { android.content.Intent.createChooser(intent, context.getString(R.string.share_links_label)) }
+}
+
+/**
+ * Exports [urls] to a `.txt` file in the app cache and opens the share sheet so the user can save
+ * it anywhere (Downloads, Drive, email, chat…). Failures surface a toast instead of crashing.
+ */
+private fun exportLinks(context: Context, urls: List<String>) {
+    if (urls.isEmpty()) {
+        Toast.makeText(context, R.string.no_links_selected, Toast.LENGTH_SHORT).show()
+        return
+    }
+    val export = runCatching {
+        val dir = java.io.File(context.cacheDir, "exports").apply { mkdirs() }
+        val file = java.io.File(dir, context.getString(R.string.export_filename))
+        file.writeText(urls.joinToString("\n") + "\n")
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            putExtra(android.content.Intent.EXTRA_TEXT, urls.joinToString("\n"))
+            putExtra(android.content.Intent.EXTRA_TITLE, context.getString(R.string.export_filename))
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        android.content.Intent.createChooser(intent, context.getString(R.string.export_links_label))
+    }
+    export.fold(
+        onSuccess = { startFileAction(context) { it } },
+        onFailure = { Toast.makeText(context, R.string.export_failed, Toast.LENGTH_SHORT).show() }
+    )
+}
+
+private fun hapticTick(context: Context) {
+    val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
+    } else {
+        @Suppress("DEPRECATION")
+        context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+    }
+    if (vibrator.hasVibrator()) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrator.vibrate(VibrationEffect.createOneShot(35, 120))
+        } else {
+            @Suppress("DEPRECATION") vibrator.vibrate(35)
+        }
+    }
+}
+
 private fun copyDownloadText(
     context: Context,
     label: String,
@@ -940,21 +1413,7 @@ private fun copyDownloadText(
 ) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
-    if (AppSettings(context).hapticsEnabled) {
-        val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            (context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager).defaultVibrator
-        } else {
-            @Suppress("DEPRECATION")
-            context.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
-        }
-        if (vibrator.hasVibrator()) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator.vibrate(VibrationEffect.createOneShot(35, 120))
-            } else {
-                @Suppress("DEPRECATION") vibrator.vibrate(35)
-            }
-        }
-    }
+    if (AppSettings(context).hapticsEnabled) hapticTick(context)
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
         Toast.makeText(context, confirmation, Toast.LENGTH_SHORT).show()
     }
