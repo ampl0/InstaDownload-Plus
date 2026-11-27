@@ -217,6 +217,7 @@ InstaDownload/                     # repo root
 | [`docs/IDEA_AND_PROCESS.md`](docs/IDEA_AND_PROCESS.md) | The idea, motivation and the process that produced this code |
 | [`docs/AGENT_REPRODUCTION_GUIDE.md`](docs/AGENT_REPRODUCTION_GUIDE.md) | A step-by-step guide for an AI agent (or human) to reproduce these changes |
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | How the app is put together and where each feature lives |
+| [`docs/COLAB_EMULATION_AND_TESTING.md`](docs/COLAB_EMULATION_AND_TESTING.md) | Fast Android emulation on Colab, screenshot capture, and how an agent can test the app headlessly |
 
 ## Privacy
 

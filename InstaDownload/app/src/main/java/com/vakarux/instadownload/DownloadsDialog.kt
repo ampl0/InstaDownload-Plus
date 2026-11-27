@@ -136,7 +136,12 @@ fun DownloadsDialog(onDismiss: () -> Unit) {
     var records by remember { mutableStateOf(DownloadHistory.load(context)) }
     var failed by remember { mutableStateOf(FailedDownloads.load(context)) }
     var links by remember { mutableStateOf(LinkHistory.load(context)) }
-    var tab by remember { mutableStateOf(LibraryTab.ALL) }
+    var tab by remember {
+        val saved = AppSettings(context).lastLibraryTab
+        mutableStateOf(
+            LibraryTab.entries.firstOrNull { it.name == saved } ?: LibraryTab.ALL
+        )
+    }
     var previewRecord by remember { mutableStateOf<DownloadRecord?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
     var selecting by remember { mutableStateOf(false) }
@@ -230,6 +235,7 @@ fun DownloadsDialog(onDismiss: () -> Unit) {
                                 onClick = {
                                     if (tab != entry) exitSelection()
                                     tab = entry
+                                    AppSettings(context).lastLibraryTab = entry.name
                                 },
                                 text = {
                                     val label = if (count != null && count > 0) {

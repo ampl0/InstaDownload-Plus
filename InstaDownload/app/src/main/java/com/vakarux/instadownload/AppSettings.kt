@@ -43,6 +43,12 @@ class AppSettings(context: Context) {
         get() = prefs.getBoolean("open_library_after_download", true)
         set(value) = prefs.edit().putBoolean("open_library_after_download", value).apply()
 
+    // Remember the last library tab the user viewed so reopening the library returns there
+    // instead of always resetting to "All". Stored by enum name; unknown values fall back to null.
+    var lastLibraryTab: String?
+        get() = prefs.getString("last_library_tab", null)
+        set(value) = prefs.edit().putString("last_library_tab", value).apply()
+
     // Easy save mode: when a link is shared to the app, start downloading immediately in the
     // background (foreground service + progress notification) with no extra tap. On by default.
     var easySaveEnabled: Boolean
